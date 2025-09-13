@@ -64,9 +64,8 @@
     <v-app-bar app color="primary">
       <v-app-bar-title>starfinder-flip-map</v-app-bar-title>
       <v-spacer></v-spacer>
-      <v-btn v-if="!isCompressed" @click="compressField">Ужать поле</v-btn>
-      <v-btn @click="exportImages">Выгрузить изображения</v-btn>
-      <v-btn @click="exportConfig">Выгрузить</v-btn>
+      <v-btn icon @click="deleteSelectedImage" :disabled="!canDelete"><v-icon>mdi-delete</v-icon></v-btn>
+      <v-btn icon @click="exportImages"><v-icon>mdi-export</v-icon></v-btn>
     </v-app-bar>
 
     <v-navigation-drawer app permanent>
@@ -141,7 +140,8 @@
       // --- Конфигурация наборов изображений ---
       const imageSets = {
         'space_station': { name: 'Космическая станция', path: 'img/space_station', count: 79, extension: 'jpg' }, // 0.jpg to 78.jpg
-        'city_starter': { name: 'Стартовый город', path: 'img/city_starter', count: 82, extension: 'png' }    // 0.png to 81.png
+        'city_starter': { name: 'Стартовый город', path: 'img/city_starter', count: 82, extension: 'png' },    // 0.png to 81.png
+        'ancient_planet': { name: 'Древняя планета', path: 'img/ancient_planet', count: 82, extension: 'png', start: 1 } // 1.png to 82.png
       };
 
       // --- Состояние (State) ---
@@ -165,11 +165,21 @@
         const set = imageSets[selectedImageSet.value];
         if (!set) return [];
         const paths = [];
+        const start = set.start || 0;
+        const end = start + set.count;
         const extension = set.extension || 'jpg'; // По умолчанию 'jpg'
-        for (let i = 0; i < set.count; i++) {
-          paths.push(`${set.path}/${i}.${extension}`);
+        for (let i = start; i < end; i++) {
+          paths.push(`${set.path}/${i}.${set.extension}`);
         }
         return paths; // Вычисляемое свойство должно возвращать значение
+      });
+
+      const canDelete = computed(() => {
+        if (selectedCellIndex.value === null) {
+          return false;
+        }
+        const cell = gridCells.value[selectedCellIndex.value];
+        return cell && cell.image;
       });
 
       onMounted(() => {
@@ -188,10 +198,11 @@
           // Если в ячейке есть изображение, поворачиваем его
           cell.rotation = (cell.rotation + 90) % 360;
           selectedCellIndex.value = null; // Сбрасываем выделение
-        } else {
-          // Если ячейка пуста, выделяем ее
-          selectedCellIndex.value = index;
         }
+        
+        // Любой клик по ячейке делает ее активной.
+        // Поворот изображения осуществляется нажатием на пробел.
+        selectedCellIndex.value = index;
       };
 
       /**
@@ -204,6 +215,19 @@
             cell.image = imageSrc;
             cell.rotation = 0; // Сбрасываем поворот при установке нового изображения
             selectedCellIndex.value = null; // Сбрасываем выделение после вставки
+          }
+        }
+      };
+
+      /**
+       * Удаляет изображение из выделенной ячейки.
+       */
+      const deleteSelectedImage = () => {
+        if (selectedCellIndex.value !== null) {
+          const cell = gridCells.value[selectedCellIndex.value];
+          if (cell) {
+            cell.image = null;
+            cell.rotation = 0;
           }
         }
       };
@@ -223,26 +247,12 @@
       };
 
       /**
-       * Экспорт конфигурации сетки в JSON файл.
-       */
-      const exportConfig = () => {
-        // Фильтруем только те ячейки, в которых есть изображения
-        const config = gridCells.value
-          .filter(cell => cell.image !== null)
-          .map(cell => ({
-            id: cell.id,
-            image: cell.image,
-            rotation: cell.rotation,
-          }));
-
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config, null, 2));
-        downloadFile(dataStr, 'map_config.json');
-      };
-
-      /**
        * Экспорт текущей конфигурации изображений в один PNG файл.
        */
       const exportImages = async () => {
+        // Сначала "ужимаем" поле до границ с изображениями
+        compressField();
+
         const bounds = activeBounds.value;
         const cellsToExport = visibleGridCells.value;
 
@@ -416,11 +426,11 @@
         selectedImageSet,
         imageSetNames,
         visibleGridCells,
+        canDelete,
         onCellClick,
         onSidebarImageClick,
-        exportConfig,
         exportImages,
-        compressField,
+        deleteSelectedImage,
         handleKeyDown,
       };
     },
