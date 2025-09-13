@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Starfinder Flip Map</title>
+  <!-- Vuetify CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/vuetify@3.x/dist/vuetify.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900" rel="stylesheet">
+  <!-- Material Design Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@5.x/css/materialdesignicons.min.css" rel="stylesheet">
+  <style>
+    /* Стили для сетки и ячеек */
+    /* display: contents заставляет дочерние элементы вести себя как прямые потомки родителя grid-контейнера */
+    #grid-container {
+      display: grid;
+      padding: 20px;
+    }
+
+    .grid-cell {
+      width: 100px;
+      height: 100px;
+      background-color: white;
+      border: 2px solid black;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden; /* Чтобы повернутое изображение не выходило за рамки */
+    }
+
+    .grid-cell.selected {
+      border-color: red;
+    }
+
+    .cell-image {
+      max-width: 100%;
+      max-height: 100%;
+      transition: transform 0.3s ease; /* Плавный поворот */
+    }
+
+    /* Стили для изображений в боковой панели */
+    .sidebar-image-container {
+      padding: 8px;
+    }
+    
+    .sidebar-image {
+      width: 100px;
+      height: 100px;
+      border: 1px solid #ccc;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+
+    .sidebar-image:hover {
+        transform: scale(1.1);
+    }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <v-app>
+    <v-app-bar app color="primary">
+      <v-app-bar-title>starfinder-flip-map</v-app-bar-title>
+      <v-spacer></v-spacer>
+      <v-btn v-if="!isCompressed" @click="compressField">Ужать поле</v-btn>
+      <v-btn @click="exportImages">Выгрузить изображения</v-btn>
+      <v-btn @click="exportConfig">Выгрузить</v-btn>
+    </v-app-bar>
+
+    <v-navigation-drawer app permanent>
+      <v-list-item>
+        <v-list-item-title class="text-h6">Изображения</v-list-item-title>
+      </v-list-item>
+      <v-divider></v-divider>
+      
+      <v-select
+        v-model="selectedImageSet"
+        :items="imageSetNames"
+        label="Набор изображений"
+        class="pa-4"
+      ></v-select>
+
+      <v-container fluid>
+        <v-row dense>
+          <v-col
+            v-for="image in sidebarImages"
+            :key="image"
+            cols="6"
+            class="sidebar-image-container"
+          >
+            <v-img
+              :src="image"
+              class="sidebar-image"
+              @click="onSidebarImageClick(image)"
+            ></v-img>
+          </v-col>
+        </v-row>
+      </v-container>
+    </v-navigation-drawer>
+
+    <v-main>
+      <div id="grid-container" :style="gridContainerStyle">
+        <div
+          v-for="cell in visibleGridCells"
+          :key="cell.id"
+          :id="`grid-cell-${cell.id}`"
+          class="grid-cell"
+          :class="{ 'selected': selectedCellIndex === cell.id }"
+          @click="onCellClick(cell.id)"
+        >
+          <img
+            v-if="cell.image"
+            :src="cell.image"
+            class="cell-image"
+            :style="{ transform: `rotate(${cell.rotation}deg)` }"
+          />
+        </div>
+      </div>
+    </v-main>
+  </v-app>
+</div>
+
+<!-- Vue 3 -->
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<!-- Vuetify -->
+<script src="https://cdn.jsdelivr.net/npm/vuetify@3.x/dist/vuetify.min.js"></script>
+
+<script>
+  const { createApp, ref, onMounted, onUnmounted, computed } = Vue;
+  const { createVuetify } = Vuetify;
+
+  const vuetify = createVuetify();
+
+  createApp({
+    setup() {
+      const GRID_SIZE = 100; // 10x10
+      const GRID_DIMENSION = 10; // Используется для расчетов строк/столбцов
+
+      // --- Конфигурация наборов изображений ---
+      const imageSets = {
+        'space_station': { name: 'Космическая станция', path: 'img/space_station', count: 79, extension: 'jpg' }, // 0.jpg to 78.jpg
+        'city_starter': { name: 'Стартовый город', path: 'img/city_starter', count: 82, extension: 'png' }    // 0.png to 81.png
+      };
+
+      // --- Состояние (State) ---
+      const gridCells = ref([]);
+      const selectedCellIndex = ref(null);
+      const isCompressed = ref(false);
+      const selectedImageSet = ref(Object.keys(imageSets)[0]); // По умолчанию 'space_station'
+      const imageSetNames = Object.keys(imageSets).map(key => ({ title: imageSets[key].name, value: key }));
+
+      // --- Инициализация ---
+      const initializeGrid = () => {
+        gridCells.value = Array.from({ length: GRID_SIZE }, (_, i) => ({
+          id: i,
+          image: null,
+          rotation: 0
+        }));
+      };
+
+      // --- Вычисляемые свойства (Computed) ---
+      const sidebarImages = computed(() => {
+        const set = imageSets[selectedImageSet.value];
+        if (!set) return [];
+        const paths = [];
+        const extension = set.extension || 'jpg'; // По умолчанию 'jpg'
+        for (let i = 0; i < set.count; i++) {
+          paths.push(`${set.path}/${i}.${extension}`);
+        }
+        return paths; // Вычисляемое свойство должно возвращать значение
+      });
+
+      onMounted(() => {
+        initializeGrid();
+      });
+
+      // --- Методы (Handlers) ---
+
+      /**
+       * Обработчик клика по ячейке в сетке.
+       */
+      const onCellClick = (index) => {
+        const cell = gridCells.value[index];
+
+        if (cell.image) {
+          // Если в ячейке есть изображение, поворачиваем его
+          cell.rotation = (cell.rotation + 90) % 360;
+          selectedCellIndex.value = null; // Сбрасываем выделение
+        } else {
+          // Если ячейка пуста, выделяем ее
+          selectedCellIndex.value = index;
+        }
+      };
+
+      /**
+       * Обработчик клика по изображению в боковой панели.
+       */
+      const onSidebarImageClick = (imageSrc) => {
+        if (selectedCellIndex.value !== null) {
+          const cell = gridCells.value[selectedCellIndex.value];
+          if (cell) {
+            cell.image = imageSrc;
+            cell.rotation = 0; // Сбрасываем поворот при установке нового изображения
+            selectedCellIndex.value = null; // Сбрасываем выделение после вставки
+          }
+        }
+      };
+
+      /**
+       * Создает ссылку для скачивания файла и инициирует его загрузку.
+       * @param {string} dataUrl - Содержимое файла в формате Data URL.
+       * @param {string} filename - Имя файла для скачивания.
+       */
+      const downloadFile = (dataUrl, filename) => {
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataUrl);
+        downloadAnchorNode.setAttribute("download", filename);
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+      };
+
+      /**
+       * Экспорт конфигурации сетки в JSON файл.
+       */
+      const exportConfig = () => {
+        // Фильтруем только те ячейки, в которых есть изображения
+        const config = gridCells.value
+          .filter(cell => cell.image !== null)
+          .map(cell => ({
+            id: cell.id,
+            image: cell.image,
+            rotation: cell.rotation,
+          }));
+
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config, null, 2));
+        downloadFile(dataStr, 'map_config.json');
+      };
+
+      /**
+       * Экспорт текущей конфигурации изображений в один PNG файл.
+       */
+      const exportImages = async () => {
+        const bounds = activeBounds.value;
+        const cellsToExport = visibleGridCells.value;
+
+        if (cellsToExport.length === 0) {
+          alert("Нет изображений для экспорта.");
+          return;
+        }
+
+        const EXPORT_CELL_SIZE = 900; // Размер ячейки для экспорта (исходное качество)
+        const numCols = bounds.maxCol - bounds.minCol + 1;
+        const numRows = bounds.maxRow - bounds.minRow + 1;
+        const cellWidth = EXPORT_CELL_SIZE;
+        const cellHeight = EXPORT_CELL_SIZE;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = numCols * cellWidth; // Используем новый размер
+        canvas.height = numRows * cellHeight;
+        const ctx = canvas.getContext('2d');
+
+        const imagePromises = cellsToExport.map((cell, index) => {
+          return new Promise(resolve => {
+            if (!cell.image) {
+              resolve();
+              return;
+            }
+
+            const img = new Image();
+            img.crossOrigin = 'Anonymous'; // На случай если изображения с другого домена
+            img.onload = () => {
+              const col = index % numCols;
+              const row = Math.floor(index / numCols);
+              const x = col * cellWidth;
+              const y = row * cellHeight;
+
+              ctx.save();
+              ctx.translate(x + cellWidth / 2, y + cellHeight / 2);
+              ctx.rotate(cell.rotation * Math.PI / 180);
+              ctx.drawImage(img, -cellWidth / 2, -cellHeight / 2, cellWidth, cellHeight); // Отрисовываем в высоком качестве
+              ctx.restore();
+              resolve();
+            };
+            img.onerror = () => resolve(); // Продолжаем, даже если изображение не загрузилось
+            img.src = cell.image;
+          });
+        });
+
+        await Promise.all(imagePromises);
+
+        const dataUrl = canvas.toDataURL('image/png');
+        downloadFile(dataUrl, 'map.png');
+      };
+
+      /**
+       * Обработчик событий клавиатуры для навигации и управления ячейками.
+       */
+      const handleKeyDown = (event) => {
+        if (selectedCellIndex.value === null && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+          selectedCellIndex.value = 0; // Выбираем первую ячейку, если ничего не выбрано
+          return;
+        }
+
+        if (selectedCellIndex.value === null) return;
+
+        let newIndex = selectedCellIndex.value;
+        const currentRow = Math.floor(newIndex / 10);
+        const currentCol = newIndex % 10;
+
+        switch (event.key) {
+          case 'ArrowUp':
+            if (currentRow > 0) newIndex -= 10;
+            break;
+          case 'ArrowDown':
+            if (currentRow < 9) newIndex += 10;
+            break;
+          case 'ArrowLeft':
+            if (currentCol > 0) newIndex -= 1;
+            break;
+          case 'ArrowRight':
+            if (currentCol < 9) newIndex += 1;
+            break;
+          case ' ': // Пробел
+            event.preventDefault(); // Предотвращаем прокрутку страницы
+            const cell = gridCells.value[selectedCellIndex.value];
+            if (event.shiftKey) {
+              // Shift + Space: Очистить ячейку
+              cell.image = null;
+              cell.rotation = 0;
+            } else if (cell.image) {
+              // Space: Повернуть изображение
+              cell.rotation = (cell.rotation + 90) % 360;
+            }
+            return; // Выходим, чтобы не менять selectedCellIndex
+          default:
+            return; // Ничего не делаем для других клавиш
+        }
+
+        event.preventDefault(); // Предотвращаем прокрутку страницы стрелками
+        selectedCellIndex.value = newIndex;
+      };
+
+      /**
+       * Удаляем обработчик событий при размонтировании компонента.
+       */
+      onUnmounted(() => {
+        window.removeEventListener('keydown', handleKeyDown);
+      });
+
+      /**
+       * Сжимает поле, удаляя пустые строки и столбцы. Это действие необратимо.
+       */
+      const compressField = () => {
+        isCompressed.value = true;
+      };
+
+      /**
+       * Вычисляемое свойство для динамического изменения стилей сетки.
+       */
+      const activeBounds = computed(() => {
+        if (!isCompressed.value) {
+          return { minRow: 0, maxRow: 9, minCol: 0, maxCol: 9 };
+        }
+
+        let minRow = GRID_DIMENSION, maxRow = -1, minCol = GRID_DIMENSION, maxCol = -1;
+        let hasImages = false;
+        gridCells.value.forEach((cell, index) => {
+          if (cell.image) {
+            hasImages = true;
+            const row = Math.floor(index / GRID_DIMENSION);
+            const col = index % GRID_DIMENSION;
+            if (row < minRow) minRow = row;
+            if (row > maxRow) maxRow = row;
+            if (col < minCol) minCol = col;
+            if (col > maxCol) maxCol = col;
+          }
+        });
+        
+        return hasImages ? { minRow, maxRow, minCol, maxCol } : { minRow: -1, maxRow: -1, minCol: -1, maxCol: -1 };
+      });
+
+      const gridContainerStyle = computed(() => {
+        const bounds = activeBounds.value;
+        const numCols = bounds.maxCol - bounds.minCol + 1;
+        const numRows = bounds.maxRow - bounds.minRow + 1;
+
+        if (numCols <= 0 || numRows <= 0) return { display: 'none' }; // Скрываем сетку если она пуста
+
+        return {
+          gridTemplateColumns: `repeat(${numCols}, 100px)`,
+          gridTemplateRows: `repeat(${numRows}, 100px)`,
+          gap: '2px'
+        };
+      });
+
+      const visibleGridCells = computed(() => {
+        const bounds = activeBounds.value;
+        if (bounds.minRow === -1) return []; // Нет картинок, ничего не показываем
+
+        return gridCells.value.filter((cell, index) => {
+          const row = Math.floor(index / GRID_DIMENSION);
+          const col = index % GRID_DIMENSION;
+          return row >= bounds.minRow && row <= bounds.maxRow && col >= bounds.minCol && col <= bounds.maxCol;
+        });
+      });
+
+      return {
+        sidebarImages,
+        gridCells,
+        selectedCellIndex,
+        isCompressed,
+        gridContainerStyle,
+        selectedImageSet,
+        imageSetNames,
+        visibleGridCells,
+        onCellClick,
+        onSidebarImageClick,
+        exportConfig,
+        exportImages,
+        compressField,
+        handleKeyDown,
+      };
+    },
+  })
+  .use(vuetify)
+  .mount('#app');
+</script>
+
+</body>
+</html>
